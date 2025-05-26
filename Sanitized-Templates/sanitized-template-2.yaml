@@ -1,0 +1,36 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: Sample CFN template with EC2 and RDS using parameterized instance types
+
+Parameters:
+  EC2InstanceType:
+    Type: String
+    Default: t3.micro
+    Description: EC2 instance type
+    AllowedValues: [t2.micro, t3.micro, t3.small, t3.medium]
+
+  RDSInstanceType:
+    Type: String
+    Default: db.t3.micro
+    Description: RDS instance type
+    AllowedValues: [db.t3.micro, db.t3.small, db.t3.medium]
+
+Resources:
+  MyEC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref 'EC2InstanceType'
+      ImageId: ami-0c55b159cbfafe1f0
+      Tags:
+      - Key: Name
+        Value: SampleEC2Instance
+
+  MyDBInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceClass: !Ref 'RDSInstanceType'
+      Engine: mysql
+      MasterUsername: "{{resolve:secretsmanager:rds_master_password:SecretString:MasterUsername}}"
+      MasterUserPassword: "{{resolve:secretsmanager:rds_master_password:SecretString:MasterUserPassword}}"
+      AllocatedStorage: 20
+      DBInstanceIdentifier: sample-db-instance

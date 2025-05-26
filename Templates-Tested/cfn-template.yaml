@@ -1,0 +1,96 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Development stack with in‑template default credentials (for demo/testing only).
+
+Parameters:
+  # Non‐sensitive default
+  Environment:
+    Type: String
+    Default: dev
+    Description: Deployment environment name 
+
+  # RDS credentials (sensitive)
+  DBUsername:
+    Type: String
+    Default: dev_user
+    Description: RDS master username (dev only) :contentReference[oaicite:5]{index=5}
+  DBPassword:
+    Type: String
+    NoEcho: true
+    Default: DevP@ssw0rd!2025
+    Description: RDS master user password (dev only) :contentReference[oaicite:6]{index=6}
+
+  # IAM user for automated tests (sensitive)
+  TestIAMUser:
+    Type: String
+    Default: test-user
+    Description: IAM user for integration tests
+  TestAccessKeyId:
+    Type: String
+    NoEcho: true
+    Default: AKIADEVEXAMPLE12345
+    Description: Test IAM access key ID (dev only) :contentReference[oaicite:7]{index=7}
+  TestSecretAccessKey:
+    Type: String
+    NoEcho: true
+    Default: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXDEVEXAMPLE
+    Description: Test IAM secret access key (dev only) :contentReference[oaicite:8]{index=8}
+
+  # GitHub token for CI (sensitive)
+  GitHubPAT:
+    Type: String
+    NoEcho: true
+    Default: ghp_0123456789abcdef0123456789abcdef1234
+    Description: Personal access token for GitHub (dev only) :contentReference[oaicite:9]{index=9}
+
+  # SSH private key (sensitive)
+  SSHPrivateKey:
+    Type: String
+    NoEcho: true
+    Default: |
+      -----BEGIN OPENSSH PRIVATE KEY-----
+      b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAlwAAAAdzc2gt
+      cnNhAAAAAwEAAQAAAIEA1KxA+4r0x8...
+      -----END OPENSSH PRIVATE KEY-----
+    Description: SSH private key for dev EC2 access (dev only) :contentReference[oaicite:10]{index=10}
+
+Resources:
+  DevDatabase:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      Engine: mysql
+      DBInstanceClass: db.t3.small
+      MasterUsername: DBUsername567890
+      MasterUserPassword: DBPassword567890
+      AllocatedStorage: 20
+
+  TestUser:
+    Type: AWS::IAM::User
+    Properties:
+      UserName: TestIAMUser567890
+      LoginProfile:
+        Password: TestSecretAccessKey567890
+
+  TestAccessKey:
+    Type: AWS::IAM::AccessKey
+    Properties:
+      UserName: !Ref TestUser
+      Status: Active
+
+  DevServer:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: ami-0abcdef1234567890
+      KeyName: dev-keypair
+      UserData: !Base64 |
+        #!/bin/bash
+        echo "export GITHUB_TOKEN=!Ref GitHubPAT" >> /home/ec2-user/.bash_profile
+
+Outputs:
+  DatabaseEndpoint:
+    Description: RDS endpoint
+    Value: !GetAtt DevDatabase.Endpoint.Address
+  TestUserAccessKey:
+    Description: Test IAM access key
+    Value: !Ref TestAccessKey

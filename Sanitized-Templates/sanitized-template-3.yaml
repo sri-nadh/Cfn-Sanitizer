@@ -1,0 +1,90 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: |
+  Development stack with in-template default credentials (for demo/testing only).
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    Description: Deployment environment name
+
+  DBUsername:
+    Type: String
+    Default: dev_user
+    Description: "RDS master username (dev only) :contentReference[oaicite:5]{index=5}"
+
+  DBPassword:
+    Type: String
+    NoEcho: true
+    Default: SANITIZED-GENERIC_PASSWORD-VALUE
+    Description: "RDS master user password (dev only) :contentReference[oaicite:6]{index=6}"
+
+  TestIAMUser:
+    Type: String
+    Default: test-user
+    Description: IAM user for integration tests
+
+  TestAccessKeyId:
+    Type: String
+    NoEcho: true
+    Default: SANITIZED-PARAMETER-VALUE
+    Description: "Test IAM access key ID (dev only) :contentReference[oaicite:7]{index=7}"
+
+  TestSecretAccessKey:
+    Type: String
+    NoEcho: true
+    Default: SANITIZED-AWS_SECRET_ACCESS_KEY-VALUE
+    Description: "Test IAM secret access key (dev only) :contentReference[oaicite:8]{index=8}"
+
+  GitHubPAT:
+    Type: String
+    NoEcho: true
+    Default: SANITIZED-OAUTH_TOKEN-VALUE
+    Description: "Personal access token for GitHub (dev only) :contentReference[oaicite:9]{index=9}"
+
+  SSHPrivateKey:
+    Type: String
+    NoEcho: true
+    Default: SANITIZED-AWS_SECRET_ACCESS_KEY-VALUE
+    Description: "SSH private key for dev EC2 access (dev only) :contentReference[oaicite:10]{index=10}"
+
+Resources:
+  DevDatabase:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      Engine: mysql
+      DBInstanceClass: db.t3.small
+      MasterUsername: "{{resolve:secretsmanager:rds_master_password:SecretString:MasterUsername}}"
+      MasterUserPassword: "{{resolve:secretsmanager:rds_master_password:SecretString:MasterUserPassword}}"
+      AllocatedStorage: 20
+
+  TestUser:
+    Type: AWS::IAM::User
+    Properties:
+      UserName: "{{resolve:secretsmanager:generic_secret:SecretString:UserName}}"
+      LoginProfile:
+        Password: "{{resolve:secretsmanager:generic_secret:SecretString:Password}}"
+
+  TestAccessKey:
+    Type: AWS::IAM::AccessKey
+    Properties:
+      UserName: !Ref 'TestUser'
+      Status: Active
+
+  DevServer:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: ami-0abcdef1234567890
+      KeyName: dev-keypair
+      UserData: !Base64 '{{resolve:secretsmanager:generic_secret:SecretString:UserData}}'
+
+Outputs:
+  DatabaseEndpoint:
+    Description: RDS endpoint
+    Value: !GetAtt 'DevDatabase.Endpoint.Address'
+
+  TestUserAccessKey:
+    Description: Test IAM access key
+    Value: !Ref 'TestAccessKey'

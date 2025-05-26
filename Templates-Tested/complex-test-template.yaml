@@ -1,0 +1,237 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Complex template with various types of sensitive data to test the sanitizer
+
+Parameters:
+  # Non-sensitive parameters
+  EnvironmentType:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, test, prod]
+    Description: The environment type for this deployment
+    
+  EC2InstanceType:
+    Type: String
+    Default: t3.micro
+    AllowedValues: [t3.micro, t3.small, t3.medium]
+    Description: EC2 instance type
+    
+  RDSInstanceType:
+    Type: String
+    Default: db.t3.micro
+    AllowedValues: [db.t3.micro, db.t3.small]
+    Description: RDS instance size
+  
+  VPCCidr:
+    Type: String
+    Default: 10.0.0.0/16
+    Description: CIDR block for the VPC
+  
+  # Sensitive parameters with NoEcho
+  AdminPassword:
+    Type: String
+    Default: Adm1nP@ssw0rd2023
+    NoEcho: true
+    Description: Password for the admin user (will be masked)
+  
+  DbMasterPassword:
+    Type: String
+    Default: MyS3cr3tP@ssw0rd!
+    NoEcho: true
+    Description: Password for RDS master user (will be masked)
+    
+  ApiKey:
+    Type: String
+    Default: sk_test_a1b2c3d4e5f6g7h8i9j0
+    NoEcho: true
+    Description: API key for external service (will be masked)
+  
+  # Sensitive parameters without NoEcho (should be detected based on content/name)
+  AccessKeyId:
+    Type: String
+    Default: AKIAIOSFODNN7EXAMPLE
+    Description: AWS Access Key ID (should be masked based on format)
+  
+  SecretAccessKey:
+    Type: String
+    Default: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+    Description: AWS Secret Access Key (should be masked based on format)
+  
+  GitHubToken:
+    Type: String
+    Default: ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789
+    Description: GitHub personal access token (should be masked based on format)
+    
+  # Non-sensitive parameters with deceptive names (shouldn't be masked)
+  KeyName:
+    Type: String
+    Default: my-ec2-key
+    Description: The name of the EC2 key pair (not sensitive despite 'Key' in name)
+    
+  TokenBucket:
+    Type: String
+    Default: my-token-bucket
+    Description: S3 bucket for tokens (not sensitive despite 'Token' in name)
+
+Mappings:
+  EnvironmentConfig:
+    dev:
+      MultiAZ: false
+      BackupRetention: 1
+    test:
+      MultiAZ: false
+      BackupRetention: 3
+    prod:
+      MultiAZ: true
+      BackupRetention: 7
+
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VPCCidr
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-VPC
+  
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Select [0, !Cidr [!Ref VPCCidr, 4, 8]]
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [0, !GetAZs ""]
+  
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Select [1, !Cidr [!Ref VPCCidr, 4, 8]]
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      
+  # Database with sensitive credentials
+  DatabaseInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      AllocatedStorage: 20
+      DBInstanceClass: !Ref RDSInstanceType
+      Engine: mysql
+      EngineVersion: 8.0.28
+      MasterUsername: admin
+      MasterUserPassword: !Ref DbMasterPassword
+      DBName: application
+      MultiAZ: !FindInMap [EnvironmentConfig, !Ref EnvironmentType, MultiAZ]
+      BackupRetentionPeriod: !FindInMap [EnvironmentConfig, !Ref EnvironmentType, BackupRetention]
+      
+  # EC2 Instance with UserData containing secrets
+  WebServer:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref EC2InstanceType
+      ImageId: ami-12345678
+      SubnetId: !Ref PublicSubnet1
+      KeyName: !Ref KeyName
+      SecurityGroupIds:
+        - !Ref WebServerSecurityGroup
+      UserData: 
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          echo "Setting up web server..."
+          echo "${AdminPassword}" > /etc/app/admin_password.txt
+          echo "${ApiKey}" > /etc/app/api_key.txt
+          export AWS_ACCESS_KEY_ID=${AccessKeyId}
+          export AWS_SECRET_ACCESS_KEY=${SecretAccessKey}
+          export GITHUB_TOKEN=${GitHubToken}
+          /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource WebServer --region ${AWS::Region}
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-WebServer
+        
+  WebServerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref VPC
+      GroupDescription: Allow web traffic
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          
+  # Lambda function with environment variables (some sensitive)
+  LambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: nodejs14.x
+      Code:
+        ZipFile: |
+          exports.handler = async (event) => {
+              console.log('Processing event:', event);
+              return { statusCode: 200, body: 'Success' };
+          };
+      Environment:
+        Variables:
+          DB_PASSWORD: !Ref DbMasterPassword
+          API_KEY: !Ref ApiKey
+          ENVIRONMENT: !Ref EnvironmentType
+          LOG_LEVEL: INFO
+          
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+        
+  # Secrets Manager secret
+  ApiKeySecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub ${AWS::StackName}-api-key
+      Description: API key for external service
+      SecretString: !Sub '{"apiKey":"${ApiKey}","username":"admin"}'
+      
+  # System with simple credentials in parameters
+  SimpleLoginSystem:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://example.com/templates/login-system.yaml
+      Parameters:
+        AdminUser: admin
+        AdminPassword: !Ref AdminPassword
+        
+  # SSM Parameter with sensitive information
+  ApiKeyParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /${AWS::StackName}/api-key
+      Type: SecureString
+      Value: !Ref ApiKey
+      Description: API key for external service
+      
+Outputs:
+  WebServerURL:
+    Description: URL of the web server
+    Value: !Sub http://${WebServer.PublicDnsName}
+    
+  DatabaseEndpoint:
+    Description: Connection endpoint for the database
+    Value: !GetAtt DatabaseInstance.Endpoint.Address
+    
+  ApiKeySecretArn:
+    Description: ARN of the API key secret
+    Value: !Ref ApiKeySecret 
